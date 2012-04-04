@@ -1,38 +1,50 @@
 #!/usr/bin/make -f
 
-# Verbose mode
-#export DH_VERBOSE=1
+export MASTER_HEAD=`git log -1 --format=%h master`
+export DEVELOPMENT_HEAD=`git log -1 --format=%h development`
+export TIMESTAMP=`date +%Y%m%d%H%M`
+export VERSION=`python setup.py -V | tail -n1`
+export GITREV=`git rev-list --all | wc -l`
+export CHANGELOGENTRY="$(VERSION)-$(TIMESTAMP)-$(GITREV)-$(MASTER_HEAD)"
 
 %:
 	dh $@ --with python2
 
-# clean sphinx build output
-override_dh_clean:
-	dh_clean
-	rm -rf swift.egg-info
-	rm -rf doc/build/*
+# If you want to run an automated build (for something like Jenkins), 
+# this is the thing for you.  Just run:
+#
+#   debian/rules automated-build
+#
+automated-build:
+	# Make a backup of the upstream debian/control
+	cp -av debian/control debian/control.pristine
 
-# build with sphinx documentation
+	# Add the current git hash to the Description field of the package
+	sed -i "s/^Description: .*$$/& (master: $(MASTER_HEAD) development: $(DEVELOPMENT_HEAD))/" debian/control
+
+	# Update the changelog
+	dch -v $(CHANGELOGENTRY) "Automated build."
+
+	# Clean up
+	dh clean --with python2
+
+	# Drop in the full git log as well as the last commit
+	git log --decorate=full --oneline  | gzip -vc > fullgitlog-tempo.gz
+	git log -n 1 > lastcommit-tempo.txt
+
+	# Build it
+	dh build --with python2
+	fakeroot dh binary --with python2
+
+	# Put the upstream debian/control back in place
+	mv -v debian/control.pristine debian/control
+
+override_dh_auto_clean:
+
 override_dh_auto_build:
-	dh_auto_build
-	mkdir -p doc/build
-	python setup.py build_sphinx
 
 override_dh_install:
-	dh_install
-	install -D -m 0640 $(CURDIR)/debian/account-server.conf $(CURDIR)/debian/swift-account/etc/swift/account-server.conf
-	install -D -m 0640 $(CURDIR)/debian/container-server.conf $(CURDIR)/debian/swift-container/etc/swift/container-server.conf
-	install -D -m 0640 $(CURDIR)/debian/object-server.conf $(CURDIR)/debian/swift-object/etc/swift/object-server.conf
-	rm -rf debian/python-swift/usr/lib/python*/dist-packages/test
+	dh_install --fail-missing
 
 override_dh_installinit:
-	dh_installinit --no-start
-	dh_installinit --no-start -pswift-container --init-script=swift-container-replicator
-	dh_installinit --no-start -pswift-account --init-script=swift-account-replicator
-	dh_installinit --no-start -pswift-account --init-script=swift-account-reaper
-	dh_installinit --no-start -pswift-object --init-script=swift-object-auditor
-	dh_installinit --no-start -pswift-container --init-script=swift-container-auditor
-	dh_installinit --no-start -pswift-account --init-script=swift-account-auditor
-	dh_installinit --no-start -pswift-object --init-script=swift-object-updater
-	dh_installinit --no-start -pswift-object --init-script=swift-object-replicator
-	dh_installinit --no-start -pswift-container --init-script=swift-container-updater
+	dh_installinit --name swift
